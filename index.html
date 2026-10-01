@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Интерактивная карта маршрута</title>
+    <style>
+        body {
+            margin: 0; padding: 0; display: flex; justify-content: center; align-items: center;
+            min-height: 100vh; background-color: #111; font-family: sans-serif;
+        }
+        /* Контейнер телефона */
+        .phone {
+            width: 420px; height: 737px; position: relative;
+            background-color: #000; border: 12px solid #333;
+            border-radius: 40px; overflow: hidden; box-shadow: 0 0 50px rgba(0,0,0,0.5);
+        }
+        /* Карта */
+        #map {
+            width: 100%; height: 100%; position: absolute;
+            background-image: url('baimskaya.png');
+            background-size: cover; background-position: center;
+            background-repeat: no-repeat; cursor: crosshair;
+        }
+        /* Точки */
+        .dot {
+            position: absolute; width: 24px; height: 24px;
+            background-color: #ff4757; border: 2px solid white;
+            border-radius: 50%; transform: translate(-50%, -50%);
+            z-index: 10; touch-action: none; box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+        .dot.start { background-color: #2ed573; } /* Зеленая точка для старта */
+        
+        /* Подписи под точками */
+        .dot-label {
+            position: absolute; top: 110%; left: 50%; transform: translateX(-50%);
+            color: white; background: rgba(0, 0, 0, 0.7);
+            padding: 2px 8px; border-radius: 4px; font-size: 12px;
+            white-space: nowrap; pointer-events: none; text-shadow: 1px 1px 2px black;
+        }
+        /* Слой для линий */
+        #route-svg {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 5;
+        }
+        #route-path {
+            fill: none; stroke: #ff4757; stroke-width: 0.6;
+            stroke-dasharray: 2, 1; stroke-linecap: round;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="phone">
+        <div id="map">
+            <!-- Слой SVG для прорисовки маршрута -->
+            <svg id="route-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
+                <polyline id="route-path" points=""></polyline>
+            </svg>
+        </div>
+    </div>
+
+    <script>
+        const map = document.getElementById('map');
+        const path = document.getElementById('route-path');
+
+        // Функция сохранения в память браузера
+        function saveAll() {
+            const dots = [];
+            document.querySelectorAll('.dot').forEach(d => {
+                dots.push({
+                    x: d.style.left, y: d.style.top,
+                    s: d.style.width, l: d.querySelector('.dot-label')?.innerText || ''
+                });
+            });
+            localStorage.setItem('final_map_data', JSON.stringify(dots));
+            updateRouteLines();
+        }
+
+        // Обновление линий между всеми точками
+        function updateRouteLines() {
+            const dots = Array.from(document.querySelectorAll('.dot'));
+            const coords = dots.map(d => `${parseFloat(d.style.left)},${parseFloat(d.style.top)}`).join(' ');
+            path.setAttribute('points', coords);
+        }
+
+        // Меню управления (Удалить / Переименовать)
+        function openMenu(dot) {
+            const label = dot.querySelector('.dot-label');
+            const res = prompt('Введите название (или "d" для удаления):', label.innerText);
+            if (res === 'd' || res === 'удалить') {
+                dot.remove();
+            } else if (res !== null) {
+                label.innerText = res;
+            }
+            saveAll();
+        }
+
+        // Настройка взаимодействий точки
+        function setupDot(dot, text = '') {
+            let label = dot.querySelector('.dot-label') || document.createElement('span');
+            label.className = 'dot-label';
+            label.innerText = text;
+            if (!label.parentElement) dot.appendChild(label);
+
+            let timer, startDist = 0, startSize = 0;
+
+            const onStart = (e) => {
+                e.preventDefault();
+                const isT = e.type.includes('touch');
+                const move = isT ? 'touchmove' : 'mousemove';
+                const end = isT ? 'touchend' : 'mouseup';
+
+                if (isT) timer = setTimeout(() => openMenu(dot), 700);
+                if (isT && e.touches.length === 2) {
+                    startDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                    startSize = parseInt(window.getComputedStyle(dot).width);
+                }
+
+                const onMove = (me) => {
+                    clearTimeout(timer);
+                    if (isT && me.touches.length === 2) {
+                        const dist = Math.hypot(me.touches[0].pageX - me.touches[1].pageX, me.touches[0].pageY - me.touches[1].pageY);
+                        const newS = startSize * (dist / startDist);
+                        dot.style.width = dot.style.height = Math.max(10, Math.min(100, newS)) + 'px';
+                    } else {
+                        const clientX = isT ? me.touches[0].clientX : me.clientX;
+                        const clientY = isT ? me.touches[0].clientY : me.clientY;
+                        const rect = map.getBoundingClientRect();
+                        dot.style.left = ((clientX - rect.left) / rect.width) * 100 + '%';
+                        dot.style.top = ((clientY - rect.top) / rect.height) * 100 + '%';
+                    }
+                    updateRouteLines();
+                };
+
+                const onEnd = () => {
+                    clearTimeout(timer);
+                    document.removeEventListener(move, onMove);
+                    document.removeEventListener(end, onEnd);
+                    saveAll();
+                };
+                document.addEventListener(move, onMove, { passive: false });
+                document.addEventListener(end, onEnd);
+            };
+
+            dot.addEventListener('mousedown', onStart);
+            dot.addEventListener('touchstart', onStart, { passive: false });
+            dot.oncontextmenu = (e) => { e.preventDefault(); openMenu(dot); };
+        }
+
+        // Клик по карте = новая точка
+        map.addEventListener('click', (e) => {
+            if (e.target !== map) return;
+            const r = map.getBoundingClientRect();
+            const d = document.createElement('div');
+            d.className = 'dot';
+            d.style.left = ((e.clientX - r.left) / r.width) * 100 + '%';
+            d.style.top = ((e.clientY - r.top) / r.height) * 100 + '%';
+            d.style.width = d.style.height = '24px';
+            setupDot(d);
+            map.appendChild(d);
+            saveAll();
+        });
